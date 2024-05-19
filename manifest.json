@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Streaming to Facebook helper",
+  "version": "1.0",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://*.zoom.us/*",
+    "https://*.facebook.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.facebook.com/*", "*://*.zoom.us/*"],
+      "js": ["content.js"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "z2f-logo.png"
+  },
+  "icons": {
+    "48": "z2f-logo-48x48.png",
+    "128": "z2f-logo-128x128.png"
+  }
+}
+
