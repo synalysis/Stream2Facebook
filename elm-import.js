@@ -1,13 +1,14 @@
 document.addEventListener("DOMContentLoaded", function () {
     var div = document.getElementById("elm-main");
-    // Elm.Main.embed(div);
 
+    chrome.storage.local.get(['streamKey', 'serverUrl'], function(items) {
         const app = Elm.Main.init({
             node: div,
             flags: {
                 url: window.location.href,
                 title: document.title,
-                lang: document.documentElement.lang || 'en'
+                streamKey: items.streamKey || '',
+                serverUrl: items.serverUrl || ''
             }
         });
 
@@ -21,4 +22,5 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
             });
         });
-  });
+    });
+});

@@ -3,12 +3,10 @@
   "name": "Streaming to Facebook helper",
   "version": "1.0",
   "permissions": [
-    "activeTab",
     "storage",
-    "tabs"
+    "activeTab"
   ],
   "host_permissions": [
-    "https://*.zoom.us/*",
     "https://*.facebook.com/*"
   ],
   "background": {
@@ -16,7 +14,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.facebook.com/*", "*://*.zoom.us/*"],
+      "matches": ["*://*.facebook.com/*"],
       "js": ["content.js"]
     }
   ],

@@ -1,9 +1,39 @@
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('Received message:', message);
 
-    if (message.type === 'processingFinished') {
+    if (message.type === 'retrieveDocumentLanguage') {
+        console.log("Language: ", document.documentElement.lang);
+        sendResponse({ type: 'DOCUMENT_LANGUAGE', language: document.documentElement.lang});
+    } else if (message.type === 'retrieveCurrentUrl') {
+        console.log("URL: ", window.location.href);
+        sendResponse({ type: 'CURRENT_URL', url: window.location.href});
+    } else if (message.type === 'processingStarted') {
+        console.log('Processing started');
+        console.log("Language: ", document.documentElement.lang);
+        sendResponse({ type: 'ACTION_COMPLETED'});
+    } else if (message.type === 'processingFinished') {
         console.log('Processing finished');
         sendResponse({ type: 'PROCESSING_COMPLETED'});
+    } else if (message.type === 'conditionalSkip') {
+        let element = document.querySelector(message.selector);
+        let found = false;
+
+        if (element && message.text) {
+            const regex = new RegExp(message.text);
+            const elements = document.querySelectorAll(message.selector);
+            for (let el of elements) {
+                if (regex.test(el.textContent.trim())) {
+                    found = true;
+                    break;
+                }
+            }
+        } else {
+            found = !!element;
+        }
+
+        const newState = found ? message.stateIfFound : message.stateIfNotFound;
+        console.log(`Conditional skip action ${found ? 'found' : 'not found'} element for selector: ${message.selector}`);
+        sendResponse({ type: 'GOTO_STATE', state: newState });
     } else if (message.type === 'click') {
         const element = document.querySelector(message.selector);
         if (element) {
@@ -209,9 +239,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.error('Focus element action failed:', message.description);
             sendResponse({ type: 'ACTION_FAILED', description: message.description });
         }
+    } else if (message.type === 'storeValue') {
+        chrome.storage.local.set({ [message.key]: message.value }, function() {
+            console.log('Stored value in Chrome storage:', message.key, message.value);
+            sendResponse({ type: 'ACTION_COMPLETED' });
+        });
+    } else if (message.type === 'eraseValue') {
+        chrome.storage.local.remove(message.key, function() {
+            console.log('Erased value from Chrome storage:', message.key);
+            sendResponse({ type: 'ACTION_COMPLETED' });
+        });
     } else if (message.type === 'log') {
         console.log('Log action:', message.message);
         sendResponse({ type: 'ACTION_COMPLETED', message: message.message });
+    } else {
+        console.log('Unknown message type:', message.type);
     }
 
     // Ensure the response is sent asynchronously
@@ -240,6 +282,7 @@ function waitForElementWithText(tag, textPattern, timeout, retries) {
             const elements = document.getElementsByTagName(tag);
             let found = false;
             for (let element of elements) {
+                // console.log("Test", element.textContent.trim());
                 if (regex.test(element.textContent.trim())) {
                     clearInterval(interval);
                     resolve();

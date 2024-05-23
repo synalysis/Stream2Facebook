@@ -3,26 +3,32 @@ module StateMachine exposing (..)
 import Json.Decode as Decode
 import Json.Encode as Encode exposing (Value)
 import Dict exposing (Dict)
-import Ports
-import Task exposing (succeed, perform) 
+import Ports exposing (sendAction)
+import Html exposing (Html, div, text)
 
 type alias State =
     { action : Action
-    , nextState : Int
+    , description : String
     }
 
 type Action
-    = LogAction String
-    | ClickAction String String
-    | RetrieveAction String String String (Maybe String)
-    | WaitAction String Int Int String (Maybe String)
-    | WaitForUrlAction String Int Int String
-    | NestedClickAction String String String
-    | ClickByTextAction String String String
+    = ProcessingStartedAction
+    | RetrieveDocumentLanguage
+    | RetrieveCurrentUrl
+    | LogAction String
+    | ClickAction String
+    | RetrieveAction String String (Maybe String)
+    | WaitAction String Int Int (Maybe String)
+    | WaitForUrlAction String Int Int
+    | NestedClickAction String String 
+    | ClickByTextAction String String
     | FillValueAction String
     | FillChildPValueAction String -- key for the value to fill
-    | FocusElementAction String String
+    | FocusElementAction String
+    | StoreValueAction String
+    | EraseValueAction String
     | ProcessingFinishedAction
+    | ConditionalSkipAction String (Maybe String) Int Int
 
 type StateMachineModel =
     Executing ExecutingModel
@@ -39,17 +45,19 @@ type alias ExecutingModel =
     , states : List State
     , dictionary : Dict String String
     , results : Dict String String
+    , language : String
     }
 
 type Msg
     = ActionCompleted
     | ActionFailed String
     | RetrieveCompleted String String
+    | GotoState Int
     | ProcessingCompleted
 
-init : List State -> Dict String String -> ( StateMachineModel, Cmd Msg )
-init states dictionary =
-    runAction {currentIndex = 0, states = states, dictionary = dictionary, results = Dict.empty} 
+init : List State -> Dict String String -> String -> ( StateMachineModel, Cmd Msg )
+init states dictionary language =
+    runAction {currentIndex = 0, states = states, dictionary = dictionary, results = Dict.empty, language = language } 
 
 update : Msg -> StateMachineModel -> ( StateMachineModel, Cmd Msg )
 update msg model =
@@ -67,6 +75,14 @@ update msg model =
 
         ActionFailed error ->
             ( Failed { error = error}, Cmd.none )
+
+        GotoState newState ->
+            case model of
+                Executing executingModel ->
+                        runAction { executingModel | currentIndex = newState }
+
+                _ ->
+                    ( model, Cmd.none )
 
         RetrieveCompleted key value ->
             case model of
@@ -122,77 +138,63 @@ runActionCmd : ExecutingModel -> Cmd Msg
 runActionCmd executingModel =
     case currentState executingModel of
         Just state ->
+            let
+                sendActionWithType =
+                    sendAction (actionTypeKey state.action)
+            in
             case state.action of
+                ProcessingStartedAction ->
+                    sendActionWithType
+                        [ ( "language", Encode.string executingModel.language ) ]
+
                 LogAction message ->
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "log" )
-                            , ( "message", Encode.string message)
-                            ]
-                        )
+                    sendActionWithType
+                            [ ( "message", Encode.string message) ]
 
-                ClickAction selector description ->
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "click" )
-                            , ( "selector", Encode.string selector )
-                            , ( "description", Encode.string description )
+                ClickAction selector ->
+                    sendActionWithType
+                            [ ( "selector", Encode.string selector )
+                            , ( "description", Encode.string state.description )
                             ]
-                        )
 
-                RetrieveAction key selector description pattern ->
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "retrieve" )
-                            , ( "key", Encode.string key )
+                RetrieveAction key selector pattern ->
+                    sendActionWithType
+                            [ ( "key", Encode.string key )
                             , ( "selector", Encode.string selector )
-                            , ( "description", Encode.string description )
+                            , ( "description", Encode.string state.description )
                             , ( "pattern", maybeEncode Encode.string pattern )
                             ]
-                        )
 
-                WaitAction selector timeout retries description textContent ->
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "wait" )
-                            , ( "selector", Encode.string selector )
+                WaitAction selector timeout retries textContent ->
+                    sendActionWithType
+                            [ ( "selector", Encode.string selector )
                             , ( "timeout", Encode.int timeout )
                             , ( "retries", Encode.int retries )
-                            , ( "description", Encode.string description )
+                            , ( "description", Encode.string state.description )
                             , ( "textContent", maybeEncode Encode.string textContent )
                             ]
-                        )
 
-                WaitForUrlAction urlPattern timeout retries description ->
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "waitForUrl" )
-                            , ( "urlPattern", Encode.string urlPattern )
+                WaitForUrlAction urlPattern timeout retries ->
+                    sendActionWithType
+                            [ ( "urlPattern", Encode.string urlPattern )
                             , ( "timeout", Encode.int timeout )
                             , ( "retries", Encode.int retries )
-                            , ( "description", Encode.string description )
+                            , ( "description", Encode.string state.description )
                             ]
-                        )
 
-                NestedClickAction parentSelector childSelector description ->
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "nestedClick" )
-                            , ( "parentSelector", Encode.string parentSelector )
+                NestedClickAction parentSelector childSelector ->
+                    sendActionWithType
+                            [ ( "parentSelector", Encode.string parentSelector )
                             , ( "childSelector", Encode.string childSelector )
-                            , ( "description", Encode.string description )
+                            , ( "description", Encode.string state.description )
                             ]
-                        )
 
-                ClickByTextAction tag text description ->
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "clickByText" )
-                            , ( "tag", Encode.string tag )
+                ClickByTextAction tag text ->
+                    sendActionWithType
+                            [ ( "tag", Encode.string tag )
                             , ( "text", Encode.string text )
-                            , ( "description", Encode.string description )
+                            , ( "description", Encode.string state.description )
                             ]
-                        )
 
                 FillValueAction key ->
                     let
@@ -200,12 +202,8 @@ runActionCmd executingModel =
                             Dict.get key executingModel.dictionary
                                 |> Maybe.withDefault ""
                     in
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "fillValue" )
-                            , ( "value", Encode.string value )
-                            ]
-                        )
+                    sendActionWithType
+                            [ ( "value", Encode.string value ) ]
 
                 FillChildPValueAction key ->
                     let
@@ -213,35 +211,103 @@ runActionCmd executingModel =
                             Dict.get key executingModel.dictionary
                                 |> Maybe.withDefault ""
                     in
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "fillChildPValue" )
+                    sendActionWithType
+                            [ ( "value", Encode.string value ) ]
+
+                FocusElementAction selector ->
+                    sendActionWithType
+                            [ ( "selector", Encode.string selector )
+                            , ( "description", Encode.string state.description )
+                            ]
+
+                StoreValueAction key ->
+                    let
+                        value =
+                            Dict.get key executingModel.results
+                                |> Maybe.withDefault ""
+                    in
+                    sendActionWithType
+                            [ ( "key", Encode.string key )
                             , ( "value", Encode.string value )
                             ]
-                        )
 
-                FocusElementAction selector description ->
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "focusElement" )
-                            , ( "selector", Encode.string selector )
-                            , ( "description", Encode.string description )
-                            ]
-                        )
+                EraseValueAction key ->
+                    sendActionWithType
+                            [ ( "key", Encode.string key ) ]
 
                 ProcessingFinishedAction ->
-                    sendAction
-                        (Encode.object
-                            [ ( "type", Encode.string "processingFinished" )
-                            ]
-                        )
+                    sendActionWithType []
+
+                ConditionalSkipAction selector maybeText stateIfFound stateIfNotFound ->
+                    sendActionWithType
+                        [ ( "selector", Encode.string selector )
+                        , ( "text", maybeEncode Encode.string maybeText )
+                        , ( "stateIfFound", Encode.int stateIfFound )
+                        , ( "stateIfNotFound", Encode.int stateIfNotFound )
+                        ]
+
+                RetrieveDocumentLanguage ->
+                    sendActionWithType []
+
+                RetrieveCurrentUrl ->
+                    sendActionWithType []
 
         Nothing ->
             Cmd.none
 
-sendAction : Value -> Cmd Msg
-sendAction value =
-    Ports.sendMessageToContentScript value
+actionTypeKey : Action -> String
+actionTypeKey actionType =
+    case actionType of
+                ProcessingStartedAction ->
+                    "processingStarted"
+
+                RetrieveDocumentLanguage ->
+                    "retrieveDocumentLanguage"
+
+                RetrieveCurrentUrl ->
+                    "retrieveCurrentUrl"
+
+                LogAction _ ->
+                    "log"
+
+                ClickAction _ ->
+                    "click"
+
+                RetrieveAction _ _ _ ->
+                    "retrieve"
+
+                WaitAction _ _ _ _ ->
+                    "wait"
+
+                WaitForUrlAction _ _ _ ->
+                    "waitForUrl"
+
+                NestedClickAction _ _ ->
+                    "nestedClick"
+
+                ClickByTextAction _ _ ->
+                    "clickByText"
+
+                FillValueAction _ ->
+                    "fillValue"
+
+                FillChildPValueAction _ ->
+                    "fillChildPValue"
+
+                FocusElementAction _ ->
+                    "focusElement"
+
+                StoreValueAction _ ->
+                    "storeValue"
+
+                EraseValueAction _ ->
+                    "eraseValue"
+
+                ProcessingFinishedAction ->
+                    "processingFinished"
+
+                ConditionalSkipAction _ _ _ _ ->
+                    "conditionalSkip"
 
 decodeMessage : Decode.Decoder Msg
 decodeMessage =
@@ -254,6 +320,9 @@ decodeMessage =
 
                     "ACTION_FAILED" ->
                         Decode.field "description" Decode.string |> Decode.map ActionFailed
+
+                    "GOTO_STATE" ->
+                        Decode.field "state" Decode.int |> Decode.map GotoState
 
                     "RETRIEVE_COMPLETED" ->
                             Decode.map2 RetrieveCompleted
@@ -279,3 +348,23 @@ maybeEncode encoder maybeValue =
     case maybeValue of
         Just value -> encoder value
         Nothing -> Encode.null
+
+view : StateMachineModel -> Html Msg
+view model =
+    case model of
+        Executing executingModel ->
+            case currentState executingModel of
+                Just state ->
+                    div []
+                        [ div []
+                            [ div []
+                            [ Html.text (state.description) ]
+                            ]
+                        ]
+                Nothing ->
+                    div [] []
+
+
+
+        _ ->
+            div [][]
