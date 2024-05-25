@@ -3,8 +3,7 @@
   "name": "Streaming to Facebook helper",
   "version": "1.0",
   "permissions": [
-    "storage",
-    "activeTab"
+    "storage"
   ],
   "host_permissions": [
     "https://*.facebook.com/*"
