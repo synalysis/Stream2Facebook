@@ -1,5 +1,11 @@
 .DS_Store
 elm-stuff/*
 elm.js
-dist/*
-z2f.zip
+dist-chrome/*
+dist-firefox/*
+dist-safari/*
+s2f-chrome.zip
+s2f-firefox.zip
+s2f-safari.zip
+s2f-source.zip
+safari/*

@@ -1,3 +1,3 @@
 #!/bin/bash
 
-elm make src/Main.elm --output=elm.js
+elm make src/Main.elm --optimize --output=elm.js

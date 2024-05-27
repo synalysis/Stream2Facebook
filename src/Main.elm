@@ -19,13 +19,15 @@ type alias Flags =
     , title : String
     , streamKey : String
     , serverUrl : String
+    , liveStreamingPageUrl : String
     }
 
 type Model
-    = RetrievingLanguage { maybeStreamKey : Maybe String, maybeServerUrl: Maybe String }
+    = RetrievingLanguage { maybeStreamKey : Maybe String, maybeServerUrl: Maybe String, maybeLiveStreamingPageUrl : Maybe String }
     | NonimplementedLanguage String
-    | Form { title : String, description : String, language : Language }
+    | Form { title : String, description : String, liveStreamingPageUrl : String, language : Language }
     | Executing StateMachineModel Language
+    | ResultsWaitingForLanguage (Dict String String)
     | Results (Dict String String) Language
     | Error String
 
@@ -56,18 +58,24 @@ languageName language =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    let
-        model =
-            if (flags.streamKey /= "") && (flags.serverUrl /= "") then
-                RetrievingLanguage { maybeStreamKey = Just flags.streamKey, maybeServerUrl = Just flags.serverUrl }
-            else
-                RetrievingLanguage { maybeStreamKey = Nothing, maybeServerUrl = Nothing }
-    in
-    (model 
-    , Cmd.batch
-        [ sendAction (StateMachine.actionTypeKey RetrieveCurrentUrl) [ ] 
-        ]
-    )
+    if (flags.streamKey /= "") && (flags.serverUrl /= "") && (flags.liveStreamingPageUrl /= "") then
+        ( ResultsWaitingForLanguage
+            (Dict.fromList
+                [ (streamKeyVarKey, flags.streamKey)
+                , (serverUrlVarKey, flags.serverUrl)
+                , (liveStreamingPageUrlVarKey, flags.liveStreamingPageUrl)
+                ]
+            )
+        , sendAction (StateMachine.actionTypeKey RetrieveDocumentLanguage) [ ]
+        )
+    else
+        ( RetrievingLanguage
+            { maybeStreamKey = Nothing
+            , maybeServerUrl = Nothing
+            , maybeLiveStreamingPageUrl = Nothing
+            }
+        , sendAction (StateMachine.actionTypeKey RetrieveCurrentUrl) [ ]
+        )
 
 -- UPDATE
 
@@ -75,6 +83,7 @@ type Msg
     = StateMachineMsg StateMachine.Msg
     | RetrievedLanguage String
     | RetrievedUrl String
+    | ActionCompleted
     | ActionFailed String
     | SubmitForm
     | UpdateTitle String
@@ -110,38 +119,51 @@ update msg model =
                     languageFromString lang
             in
             case (model, maybeLanguage) of
+                (ResultsWaitingForLanguage results, Just language ) ->
+                    (Results results language, Cmd.none)
+
                 (Error _, _) ->
                     (model, Cmd.none)
 
                 (_, Nothing) ->
                     (NonimplementedLanguage lang, Cmd.none)
-            
-                (RetrievingLanguage { maybeStreamKey, maybeServerUrl } , Just language) ->
-                    case (maybeStreamKey, maybeServerUrl) of
-                        (Just streamKey, Just serverUrl) ->
-                            ( Results (Dict.fromList [ (streamKeyVarKey, streamKey), (serverUrlVarKey, serverUrl) ]) language, Cmd.none)
 
-                        (_, _) ->
-                            ( Form { title = "", description = "", language = language } , Cmd.none)
+                (RetrievingLanguage { maybeStreamKey, maybeServerUrl, maybeLiveStreamingPageUrl }, Just language) ->
+                    case (maybeStreamKey, maybeServerUrl, maybeLiveStreamingPageUrl) of
+                        (Just streamKey, Just serverUrl, Just liveStreamingPageUrl ) ->
+                            ( Results (Dict.fromList [ (streamKeyVarKey, streamKey), (serverUrlVarKey, serverUrl), (liveStreamingPageUrlVarKey, liveStreamingPageUrl) ]) language, Cmd.none)
+
+                        (_, _, Just liveStreamingPageUrl ) ->
+                            ( Form { title = "", description = "", language = language, liveStreamingPageUrl = liveStreamingPageUrl } , Cmd.none)
+
+                        (_, _, _) ->
+                            ( Form { title = "", description = "", language = language, liveStreamingPageUrl = "" } , Cmd.none)
 
                 (_, _) ->
                     (Error "Invalid state", Cmd.none)
 
         RetrievedUrl currentUrl ->
-            if not (matchesPattern "facebook\\.com\\/groups\\/" currentUrl) then
-                (Error "This plugin works only for Facebook groups", Cmd.none)
-            else
-                (model, sendAction (StateMachine.actionTypeKey RetrieveDocumentLanguage) [ ])
+                    if not (matchesPattern "facebook\\.com\\/groups\\/" currentUrl) then
+                        (Error "This plugin works only for Facebook groups", Cmd.none)
+                    else
+                        modelWithCurrentUrl model currentUrl
+
+        ActionCompleted ->
+            (model, Cmd.none)
 
         ActionFailed error ->
             (Error error, Cmd.none)
 
         SubmitForm ->
             case model of
-                Form { title, description, language } ->
+                Form { title, description, language, liveStreamingPageUrl} ->
                   let
                     ( newStateMachine, newCmd ) =
-                        StateMachine.init (translatedStates initialStates language) (Dict.fromList [ ("title", title), ("description", description) ]) (languageName language) 
+                        StateMachine.init
+                            (translatedStates initialStates language)
+                            (Dict.fromList [ ("title", title), ("description", description) ])
+                            (languageName language) 
+                            (Dict.fromList [ (liveStreamingPageUrlVarKey, liveStreamingPageUrl) ])
                  in
                  ( Executing newStateMachine language
                  , Cmd.batch [ Cmd.map StateMachineMsg newCmd ]
@@ -151,8 +173,8 @@ update msg model =
 
         UpdateTitle newTitle ->
             case model of
-                Form { description, language } ->
-                    ( Form { title = newTitle, description = description, language = language }
+                Form { description, language, liveStreamingPageUrl } ->
+                    ( Form { title = newTitle, description = description, language = language, liveStreamingPageUrl = liveStreamingPageUrl}
                     , Cmd.none
                     )
 
@@ -161,8 +183,8 @@ update msg model =
 
         UpdateDescription newDescription ->
             case model of
-                Form { title, language } ->
-                    ( Form { title = title, description = newDescription, language = language }
+                Form { title, language, liveStreamingPageUrl } ->
+                    ( Form { title = title, description = newDescription, language = language, liveStreamingPageUrl = liveStreamingPageUrl }
                     , Cmd.none
                     )
 
@@ -171,16 +193,39 @@ update msg model =
 
         ResetResults ->
             case model of
-                Results _ language  ->
-                    ( Form { title = "", description = "", language = language },
-                     Cmd.batch
-                        [ sendAction (StateMachine.actionTypeKey (EraseValueAction streamKeyVarKey)) [ ( "key", Encode.string streamKeyVarKey ) ]
+                Results _ _  ->
+                    ( RetrievingLanguage
+                                { maybeStreamKey = Nothing
+                                , maybeServerUrl = Nothing
+                                , maybeLiveStreamingPageUrl = Nothing
+                                }
+                    , Cmd.batch
+                        [ sendAction (StateMachine.actionTypeKey (EraseValueAction streamKeyVarKey)) [ ( "key", Encode.string streamKeyVarKey) ]
                         , sendAction (StateMachine.actionTypeKey (EraseValueAction serverUrlVarKey)) [ ( "key", Encode.string serverUrlVarKey) ]
+                        , sendAction (StateMachine.actionTypeKey (EraseValueAction liveStreamingPageUrlVarKey)) [ ( "key", Encode.string liveStreamingPageUrlVarKey) ]
+                        , sendAction (StateMachine.actionTypeKey RetrieveCurrentUrl) [ ]
                         ]
                      )
 
                 _ ->
                     ( model, Cmd.none )
+
+modelWithCurrentUrl : Model -> String -> (Model, Cmd Msg)
+modelWithCurrentUrl model currentUrl =
+    let
+        retrieveLanguageCmd =
+            sendAction (StateMachine.actionTypeKey RetrieveDocumentLanguage) [ ]
+    in
+    case model of
+        Form { title, description, language } ->
+            ( Form { title = title, description = description, language = language, liveStreamingPageUrl = currentUrl }, retrieveLanguageCmd )
+
+        RetrievingLanguage { maybeStreamKey, maybeServerUrl } ->
+            (RetrievingLanguage { maybeStreamKey = maybeStreamKey, maybeServerUrl = maybeServerUrl, maybeLiveStreamingPageUrl = Just currentUrl }, retrieveLanguageCmd)
+
+        _ ->
+            (model, retrieveLanguageCmd)
+
 
 matchesPattern : String -> String -> Bool
 matchesPattern pattern str =
@@ -196,6 +241,7 @@ initialStates =
     [ { action = ProcessingStartedAction, description = "Processing started" }
     , { action = EraseValueAction streamKeyVarKey, description = "Erase stream key" }
     , { action = EraseValueAction serverUrlVarKey, description = "Erase server URL" }
+    , { action = EraseValueAction liveStreamingPageUrlVarKey, description = "Erase live streaming page URL" }
     , { action = LogAction "Checking if the current URL is a Facebook group", description = "Logging" }
     , { action = WaitForUrlAction "facebook.com/groups" 0 1, description = "Check for Facebook group" }
     , { action = ClickAction "div.xmjcpbm.x2g32xy[role='button'][tabindex='0']", description = "Click on post" }
@@ -211,19 +257,20 @@ initialStates =
     , { action = RetrieveAction streamKeyVarKey "input[aria-label='Stream key']" Nothing, description = "Retrieve stream key" }
     , { action = ClickByTextAction "span" "Advanced Settings", description = "Click 'Advanced Settings" }
     , { action = RetrieveAction serverUrlVarKey "input[type='text']" (Just "rtmps"), description = "Retrieve server URL" }
-    , { action = ConditionalSkipAction "span" (Just "Add post details") 31 19, description = "Skip opening dialog if values can be entered directly" }
+    , { action = ConditionalSkipAction "span" (Just "What's your live video about?") 20 33, description = "Skip opening dialog if values can be entered directly" }
     -- "de" variant - extra dialog
-    , { action = ClickByTextAction "span" "What's your live video about?", description = "Click on 'Worum geht es in deinem Live-Video?'" }
-    , { action = WaitAction "span" 1000 5 (Just "Titel \\(erforderlich\\)"), description = "Wait for 'Titel (erforderlich)" }
-    , { action = ClickByTextAction "span" "Titel \\(erforderlich\\)", description = "Click on 'Titel (erforderlich)'" }
+    , { action = ClickByTextAction "span" "What's your live video about?", description = "Click on 'What's your live video about?'" }
+    , { action = WaitAction "span" 1000 10 (Just "Title \\(required\\)"), description = "Wait for 'Title (required)" }
+    , { action = ClickByTextAction "span" "Title \\(required\\)", description = "Click on 'Title (required)'" }
     , { action = NestedClickAction "form[method='POST']:not([class]):not([action])" "input[type='text']", description = "Click 'Titel' within dialog" }
     , { action = FillValueAction "title", description = "Fill 'title'" }
-    , { action = FocusElementAction "div[aria-label='Beschreibung (erforderlich)'][role='textbox']", description = "Focus on 'Beschreibung (erforderlich)" }
+    , { action = FocusElementAction "div[aria-label='Description (Required)'][role='textbox']", description = "Focus on 'Beschreibung (erforderlich)" }
     , { action = FillChildPValueAction "description", description = "Fill 'description'" }
     , { action = NestedClickAction "form[method='POST']:not([class]):not([action])" "input[type='text']", description = "Click 'Titel' within dialog" }
     , { action = ClickAction "div[aria-label='Save'][role='button']", description = "Click 'Save'" }
     , { action = StoreValueAction streamKeyVarKey, description = "Store stream key" }
     , { action = StoreValueAction serverUrlVarKey, description = "Store server URL" }
+    , { action = StoreValueAction liveStreamingPageUrlVarKey, description = "Store live streaming page URL" }
     , { action = ProcessingFinishedAction, description = "Finished" }
     -- "en" variant
     , { action = ClickByTextAction "span" "Title \\(optional\\)", description = "Click on 'Title (optional)'" }
@@ -233,6 +280,7 @@ initialStates =
     , { action = FillChildPValueAction "description", description = "Fill 'description'" }
     , { action = StoreValueAction streamKeyVarKey, description = "Store stream key" }
     , { action = StoreValueAction serverUrlVarKey, description = "Store server URL" }
+    , { action = StoreValueAction liveStreamingPageUrlVarKey, description = "Store live streaming page URL" }
     , { action = ProcessingFinishedAction, description = "Finished" }
     ]
 
@@ -251,10 +299,21 @@ translationDictDe =
     , ( "div[aria-label='Streaming software']", "div[aria-label='Streaming-Software']" )
     , ( "input[aria-label='Stream key']", "input[aria-label='Stream-Schlüssel']" )
     , ( "What's your live video about?", "Worum geht es in deinem Live-Video?" )
+    , ( "Title \\(required\\)", "Titel \\(erforderlich\\)" )
+    , ( "div[aria-label='Description (Required)'][role='textbox']", "div[aria-label='Beschreibung (erforderlich)'][role='textbox']" )
     , ( "div[aria-label='Save'][role='button']", "div[aria-label='Speichern'][role='button']" )
     , ( "Advanced Settings", "Erweiterte Einstellungen")
+    , ( "Submit", "Absenden")
+    , ( "Enter description here...", "Beschreibung eingeben")
+    , ( "Title: ", "Titel: ")
+    , ( "Description: ", "Beschreibung: ")
+    , ( "Reset", "Zurücksetzen")
+    , ( streamKeyVarKey, "Streaming-Schlüssel")
+    , ( serverUrlVarKey, "Server URL")
+    , ( liveStreamingPageUrlVarKey, "Live Streaming Page URL")
     ]
     |> Dict.fromList
+
 
 translationDictForLanguage : Language -> TranslationDict
 translationDictForLanguage lang =
@@ -312,10 +371,16 @@ translatedText translationDict text =
             text
 
 streamKeyVarKey : String
-streamKeyVarKey = "streamKey"
+streamKeyVarKey =
+    "streamKey"
 
 serverUrlVarKey : String
-serverUrlVarKey = "serverUrl"
+serverUrlVarKey =
+    "serverUrl"
+
+liveStreamingPageUrlVarKey : String
+liveStreamingPageUrlVarKey =
+    "liveStreamingPageUrl"
 
 -- VIEW
 
@@ -328,7 +393,7 @@ view model =
         RetrievingLanguage _ ->
             div [][ text ( "Retrieving language")]
 
-        Form { title, description } ->
+        Form { title, description, language } ->
             let
                 submitDisabledAttribute =
                     if title == "" || description == "" then
@@ -340,34 +405,38 @@ view model =
             div []
                 [ form [ onSubmit SubmitForm, style "padding" "20px", style "background-color" "#f0f0f0", name "plugin-form" ]
                 [ div [ style "margin-bottom" "20px" ]
-                    [ label [] [ text "Title: " ]
+                    [ label [] [ text (translatedText (translationDictForLanguage language) "Title: ") ]
                     , input [ type_ "text", value title, onInput UpdateTitle, style "width" "100%" ] []
                     ]
                 , div [ style "margin-bottom" "20px" ]
-                    [ label [] [ text "Description: " ]
-                    , textarea [ value description, onInput UpdateDescription, placeholder "Enter description here...", style "width" "100%", style "height" "100px" ] []
+                    [ label [] [ text (translatedText (translationDictForLanguage language) "Description: ") ]
+                    , textarea [ value description, onInput UpdateDescription, placeholder (translatedText (translationDictForLanguage language) "Enter description here..."), style "width" "100%", style "height" "100px" ] []
                     ]
-                , button (submitDisabledAttribute ++ [ onClick SubmitForm ]) [ text "Submit" ]
+                , button (submitDisabledAttribute ++ [ onClick SubmitForm ]) [ text (translatedText (translationDictForLanguage language) "Submit") ]
+
                 ]
             ]
 
         Executing stateMachine _ ->
             Html.map StateMachineMsg (StateMachine.view stateMachine) 
 
-        Results results _ ->
+        ResultsWaitingForLanguage results ->
+            view (Results results English)
+
+        Results results language ->
             div [style "padding" "20px", style "background-color" "#f0f0f0"]
-                [ div [style "margin-bottom" "20px" ] (Dict.toList results |> List.map viewResult)
-                , button [ onClick ResetResults ] [ text "Reset" ]
+                [ div [style "margin-bottom" "20px" ] (Dict.toList results |> List.map (viewResult language))
+                , button [ onClick ResetResults ] [ text (translatedText (translationDictForLanguage language) "Reset") ]
                 ]
 
         Error error ->
             div [] [ text ("Error: " ++ error) ]
 
 
-viewResult : (String, String) -> Html Msg
-viewResult (key, value) =
+viewResult : Language -> (String, String) -> Html Msg
+viewResult language (key, value) =
     div [ style "margin-bottom" "10px" ]
-        [ text (key ++ ": ")
+        [ text ( (translatedText (translationDictForLanguage language) key) ++ ": ")
         , b [] [ text value]
         ]
 
@@ -380,11 +449,8 @@ subscriptions model =
         Executing stateMachine _ ->
             Sub.map StateMachineMsg (StateMachine.subscriptions stateMachine)
 
-        RetrievingLanguage _ ->
-            Ports.receiveMessageFromContentScript decodeValueToMsg
-
         _ ->
-            Sub.none
+            Ports.receiveMessageFromContentScript decodeValueToMsg
 
 decodeValueToMsg : Value -> Msg
 decodeValueToMsg value =
@@ -398,6 +464,9 @@ decodeMessage =
         [ Decode.field "type" Decode.string
             |> Decode.andThen (\type_ ->
                 case type_ of
+                    "ACTION_COMPLETED" ->
+                        Decode.succeed ActionCompleted
+
                     "DOCUMENT_LANGUAGE" ->
                             Decode.map RetrievedLanguage
                                 (Decode.field "language" Decode.string)

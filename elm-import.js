@@ -1,14 +1,15 @@
 document.addEventListener("DOMContentLoaded", function () {
     var div = document.getElementById("elm-main");
 
-    chrome.storage.local.get(['streamKey', 'serverUrl'], function(items) {
+    chrome.storage.local.get(['streamKey', 'serverUrl', 'liveStreamingPageUrl'], function(items) {
         const app = Elm.Main.init({
             node: div,
             flags: {
                 url: window.location.href,
                 title: document.title,
                 streamKey: items.streamKey || '',
-                serverUrl: items.serverUrl || ''
+                serverUrl: items.serverUrl || '',
+                liveStreamingPageUrl: items.liveStreamingPageUrl || ''
             }
         });
 

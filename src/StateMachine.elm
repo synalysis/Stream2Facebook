@@ -55,9 +55,9 @@ type Msg
     | GotoState Int
     | ProcessingCompleted
 
-init : List State -> Dict String String -> String -> ( StateMachineModel, Cmd Msg )
-init states dictionary language =
-    runAction {currentIndex = 0, states = states, dictionary = dictionary, results = Dict.empty, language = language } 
+init : List State -> Dict String String -> String -> Dict String String -> ( StateMachineModel, Cmd Msg )
+init states dictionary language resultsDict =
+    runAction {currentIndex = 0, states = states, dictionary = dictionary, results = resultsDict, language = language } 
 
 update : Msg -> StateMachineModel -> ( StateMachineModel, Cmd Msg )
 update msg model =

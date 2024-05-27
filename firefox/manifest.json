@@ -10,7 +10,12 @@
     "https://*.facebook.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "page": "background.html"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "streaming-to-facebook@xn--y9a.net"
+    }
   },
   "content_scripts": [
     {
