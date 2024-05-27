@@ -6,7 +6,6 @@ set -e
 CHROME_DIST_ZIP=../s2f-chrome.zip
 FIREFOX_DIST_ZIP=../s2f-firefox.zip
 FIREFOX_SOURCE_ZIP=./s2f-source.zip
-SAFARI_DIST_ZIP=../s2f-safari.zip
 
 elm make src/Main.elm --optimize --output=dist-chrome/elm.js
 
@@ -45,20 +44,3 @@ popd
 
 [ -f "$FIREFOX_SOURCE_ZIP" ] && rm $FIREFOX_SOURCE_ZIP
 zip -r $FIREFOX_SOURCE_ZIP src build.sh
-
-elm make src/Main.elm --optimize --output=dist-safari/elm.js
-
-# Safari
-pushd dist-safari
-cp ../background.js .
-cp ../content.js .
-cp ../elm-import.js .
-cp ../manifest.json .
-cp ../popup.html .
-cp ../s2f-logo.png .
-cp ../s2f-logo-48x48.png .
-cp ../s2f-logo-128x128.png .
- 
-[ -f "$SAFARI_DIST_ZIP" ] && rm $SAFARI_DIST_ZIP
-zip -r $SAFARI_DIST_ZIP *
-popd
