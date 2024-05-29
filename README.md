@@ -3,7 +3,7 @@
 **Attention: This plugin could lead to account restrictions if used on facebook.com. It's intended as a starting point for Chrome/Firefox plugin implementations using the Elm programming language.**
 
 ## Features
-* determines the language of the ´<html>´ tag of the page the plugin is running in
+* determines the language of the \<html\> tag of the page the plugin is running in
 * determines the URL of the page the plugin is running in
 * has a generic state machine that executes a sequence of actions:
   1. Click on an element with a certain selector
